@@ -18,6 +18,7 @@ import (
 	_ "github.com/coredns/coredns/plugin/metrics"
 	_ "github.com/coredns/coredns/plugin/pprof"
 	_ "github.com/coredns/coredns/plugin/proxy"
+	_ "github.com/coredns/coredns/plugin/reload"
 	_ "github.com/coredns/coredns/plugin/rewrite"
 	_ "github.com/coredns/coredns/plugin/tls"
 	_ "github.com/coredns/coredns/plugin/whoami"
@@ -28,6 +29,7 @@ import (
 // Directives are registered in the order they should be executed.
 var directives = []string{
 	"tls",
+	"reload",
 	"bind",
 	"health",
 	"pprof",

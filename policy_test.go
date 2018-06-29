@@ -26,7 +26,29 @@ var (
 	AttrNamePolicyID = "policy_id"
 )
 
-func TestPolicy(t *testing.T) {
+func TestPermitDeny(t *testing.T) {
+	p := newPolicyPlugin()
+	tests := []struct {
+		evalExpression []string
+	}{
+		{
+			evalExpression: []string{"'foo.com' == 'foo.com'"},
+		},
+	}
+	for _, test := range tests {
+
+		result, err := p.evaluateExpression(test.evalExpression)
+
+		if err != nil {
+			t.Errorf("Expected no error but got %s", err)
+		}
+
+		if result != true {
+			t.Errorf("Expected true but got %v", result)
+		}
+	}
+}
+func testPolicy(t *testing.T) {
 	p := newPolicyPlugin()
 	p.confAttrs[AttrNamePolicyID] = confAttrTransfer
 	p.passthrough = []string{"google.com."}

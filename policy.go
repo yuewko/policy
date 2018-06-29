@@ -19,10 +19,13 @@ import (
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/pkg/nonwriter"
 	"github.com/coredns/coredns/plugin/pkg/trace"
+	"github.com/coredns/coredns/request"
+
 	"github.com/mholt/caddy"
 	"github.com/miekg/dns"
 	"golang.org/x/net/context"
 
+	"github.com/Knetic/govaluate"
 	pdp "github.com/infobloxopen/themis/pdp-service"
 	"github.com/infobloxopen/themis/pep"
 )
@@ -77,6 +80,11 @@ type edns0Map struct {
 	end      uint
 }
 
+type policyRule struct {
+	keyword string
+	params  []string
+}
+
 type pdpServer struct {
 	policyFile   string
 	contentFiles []string
@@ -86,6 +94,7 @@ type pdpServer struct {
 // requests and replies using PDP server.
 type policyPlugin struct {
 	endpoints       []string
+	rule            policyRule
 	pdpSvr          pdpServer
 	options         map[uint16][]*edns0Map
 	confAttrs       map[string]confAttrType
@@ -166,7 +175,10 @@ func (p *policyPlugin) parseOption(c *caddy.Controller) error {
 	switch c.Val() {
 	case "pdp":
 		return p.parsePDP(c)
-
+	case "permit":
+		return p.parsePermit(c)
+	case "deny":
+		return p.parseDeny(c)
 	case "endpoint":
 		return p.parseEndpoint(c)
 
@@ -212,6 +224,76 @@ func (p *policyPlugin) parsePDP(c *caddy.Controller) error {
 	p.pdpSvr.policyFile = args[0]
 	if argsLen > 1 {
 		p.pdpSvr.contentFiles = args[1:]
+	}
+	return nil
+}
+
+func (p *policyPlugin) evaluateExp(args []string, keyword string, w dns.ResponseWriter, r *dns.Msg) (interface{}, error) {
+	req := request.Request{W: w, Req: r}
+	parameters := make(map[string]interface{}, 8)
+
+	switch args[0] {
+	case "queryName":
+		args[0] = req.QName()
+		parameters["queryName"] = args[0]
+	}
+	expression, err := govaluate.NewEvaluableExpression(strings.Join(args, " "))
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := expression.Evaluate(parameters)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (p *policyPlugin) evaluateExpression(args []string) (interface{}, error) {
+	expression, err := govaluate.NewEvaluableExpression(strings.Join(args, " "))
+	if err != nil {
+		return nil, err
+	}
+	parameters := make(map[string]interface{}, 8)
+	parameters["queryName"] = args[0]
+	result, err := expression.Evaluate(parameters)
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// Usage: permit <attribute> [evalExpression] <value>
+func (p *policyPlugin) parsePermit(c *caddy.Controller) error {
+	args := c.RemainingArgs()
+	argsLen := len(args)
+	if argsLen < 0 {
+		return c.ArgErr()
+	}
+	p.rule.params = args
+	p.rule.keyword = "permit"
+
+	_, err := p.evaluateExpression(args)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// Usage: deny <attribute> [evalExpression] <value>
+func (p *policyPlugin) parseDeny(c *caddy.Controller) error {
+	args := c.RemainingArgs()
+	argsLen := len(args)
+	if argsLen < 0 {
+		return c.ArgErr()
+	}
+	p.rule.params = args
+	p.rule.keyword = "deny"
+
+	_, err := p.evaluateExpression(args)
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -659,13 +741,32 @@ func (p *policyPlugin) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dn
 		}
 	}
 
-	// validate domain name (validation #1)
-	err = p.validate(ah, "")
-	if err != nil {
-		status = dns.RcodeServerFailure
-		goto Exit
-	}
+	if p.rule.keyword != "" {
+		result, err := p.evaluateExp(p.rule.params, p.rule.keyword, w, r)
+		if err != nil {
+			resolveFailed = true
+			goto Exit
+		}
+		if result == true {
+			if p.rule.keyword == "permit" {
+				ah.action = typeAllow
 
+			} else if p.rule.keyword == "deny" {
+				ah.action = typeRefuse
+			}
+		}
+		if result == false {
+			ah.action = typeRefuse
+		}
+	}
+	if p.pdpSvr.policyFile != "" {
+		// validate domain name (validation #1)
+		err = p.validate(ah, "")
+		if err != nil {
+			status = dns.RcodeServerFailure
+			goto Exit
+		}
+	}
 	if ah.action == typeAllow || ah.action == typeLog {
 		// resolve domain name to IP
 		responseWriter := nonwriter.New(w)
@@ -680,7 +781,7 @@ func (p *policyPlugin) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dn
 			// if external resolver ret code is not RcodeSuccess
 			// address is not filled from the answer
 			// in this case just pass through answer w/o validation
-			if len(address) > 0 {
+			if len(address) > 0 && p.pdpSvr.policyFile != "" {
 				// validate response IP (validation #2)
 				err = p.validate(ah, address)
 				if err != nil {
