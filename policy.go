@@ -80,10 +80,6 @@ type edns0Map struct {
 	end      uint
 }
 
-type policyRule struct {
-	keyword string
-	params  []string
-}
 
 type pdpServer struct {
 	policyFile   string
@@ -94,7 +90,8 @@ type pdpServer struct {
 // requests and replies using PDP server.
 type policyPlugin struct {
 	endpoints       []string
-	rule            policyRule
+	query           policyList
+	reply			policyList
 	pdpSvr          pdpServer
 	options         map[uint16][]*edns0Map
 	confAttrs       map[string]confAttrType
@@ -264,6 +261,29 @@ func (p *policyPlugin) evaluateExpression(args []string) (interface{}, error) {
 	return result, nil
 }
 
+
+func  (p *policyPlugin) parseRule(c *caddy.Controller) error {
+	args := c.RemainingArgs()
+	argsLen := len(args)
+	if argsLen < 0 {
+		return c.ArgErr()
+	}
+
+	ruleType := c.Val()
+	filterPosition := args[0]
+	expression := args[1:]
+
+	policyRule{
+		keyword:
+	}
+	switch c.Val() {
+	case "permit":
+
+	case "deny":
+
+	}
+
+}
 // Usage: permit <attribute> [evalExpression] <value>
 func (p *policyPlugin) parsePermit(c *caddy.Controller) error {
 	args := c.RemainingArgs()
@@ -271,8 +291,8 @@ func (p *policyPlugin) parsePermit(c *caddy.Controller) error {
 	if argsLen < 0 {
 		return c.ArgErr()
 	}
-	p.rule.params = args
-	p.rule.keyword = "permit"
+	p.rule[0].params = args
+	p.rule[0].keyword = "permit"
 
 	_, err := p.evaluateExpression(args)
 	if err != nil {
@@ -288,8 +308,8 @@ func (p *policyPlugin) parseDeny(c *caddy.Controller) error {
 	if argsLen < 0 {
 		return c.ArgErr()
 	}
-	p.rule.params = args
-	p.rule.keyword = "deny"
+	p.rule[0].params = args
+	p.rule[0].keyword = "deny"
 
 	_, err := p.evaluateExpression(args)
 	if err != nil {
@@ -741,30 +761,33 @@ func (p *policyPlugin) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dn
 		}
 	}
 
-	if p.rule.keyword != "" {
-		result, err := p.evaluateExp(p.rule.params, p.rule.keyword, w, r)
-		if err != nil {
-			resolveFailed = true
-			goto Exit
-		}
-		if result == true {
-			if p.rule.keyword == "permit" {
-				ah.action = typeAllow
-
-			} else if p.rule.keyword == "deny" {
+	for _, rule := range p.query[0].ruleList {
+		if rule.keyword != "" {
+			result, err := p.evaluateExp(rule.params, rule.keyword, w, r)
+			if err != nil {
+				resolveFailed = true
+				goto Exit
+			}
+			// TODO: Check if result is a bool or no
+			// Make it a switch statement
+			if result == true {
+				if rule.keyword == "permit" {
+					ah.action = typeAllow
+				} else if rule.keyword == "deny" {
+					ah.action = typeRefuse
+				}
+			}
+			if result == false {
 				ah.action = typeRefuse
 			}
 		}
-		if result == false {
-			ah.action = typeRefuse
-		}
-	}
-	if p.pdpSvr.policyFile != "" {
-		// validate domain name (validation #1)
-		err = p.validate(ah, "")
-		if err != nil {
-			status = dns.RcodeServerFailure
-			goto Exit
+		if p.pdpSvr.policyFile != "" {
+			// validate domain name (validation #1)
+			err = p.validate(ah, "")
+			if err != nil {
+				status = dns.RcodeServerFailure
+				goto Exit
+			}
 		}
 	}
 	if ah.action == typeAllow || ah.action == typeLog {
