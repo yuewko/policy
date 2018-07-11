@@ -32,7 +32,7 @@ func (f *Forward) Forward(state request.Request) (*dns.Msg, error) {
 			proxy = f.List()[0]
 		}
 
-		ret, err := proxy.Connect(context.Background(), state, f.forceTCP, true)
+		ret, err := proxy.Connect(context.Background(), state, f.opts)
 
 		ret, err = truncated(state, ret, err)
 		upstreamErr = err
@@ -81,7 +81,7 @@ func (f *Forward) Lookup(state request.Request, name string, typ uint16) (*dns.M
 func NewLookup(addr []string) *Forward {
 	f := New()
 	for i := range addr {
-		p := NewProxy(addr[i], nil)
+		p := NewProxy(addr[i], DNS)
 		f.SetProxy(p)
 	}
 	return f

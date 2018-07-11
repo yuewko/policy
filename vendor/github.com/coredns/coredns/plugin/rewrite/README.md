@@ -179,8 +179,8 @@ rewrite [continue|stop] name regex STRING STRING answer name STRING STRING
 
 Using FIELD edns0, you can set, append, or replace specific EDNS0 options on the request.
 
-* `replace` will modify any matching (what that means may vary based on EDNS0 type) option with the specified option
-* `append` will add the option regardless of what options already exist
+* `replace` will modify any "matching" option with the specified option. The criteria for "matching" varies based on EDNS0 type.
+* `append` will add the option only if no matching option exists
 * `set` will modify a matching option or add one if none is found
 
 Currently supported are `EDNS0_LOCAL`, `EDNS0_NSID` and `EDNS0_SUBNET`.
@@ -209,10 +209,22 @@ rewrites the first local option with code 0xffee, setting the data to "abcd". Eq
 * A variable data is specified with a pair of curly brackets `{}`. Following are the supported variables:
   {qname}, {qtype}, {client_ip}, {client_port}, {protocol}, {server_ip}, {server_port}.
 
-Example:
+* If the metadata plugin is enabled, then labels are supported as variables if they are presented within curly brackets.
+the variable data will be filled with the value associated with that label. If that label is not provided,
+the variable will be silently substitute by an empty string.
+
+Examples:
 
 ~~~
 rewrite edns0 local set 0xffee {client_ip}
+~~~
+
+The following example uses metadata and an imaginary "some-plugin" that would provide "some-label" as metadata information.
+
+~~~
+metadata
+some-plugin
+rewrite edns0 local set 0xffee {some-plugin/some-label}
 ~~~
 
 ### EDNS0_NSID

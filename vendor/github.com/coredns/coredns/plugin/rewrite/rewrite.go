@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/coredns/coredns/plugin"
+	"github.com/coredns/coredns/request"
 
 	"github.com/miekg/dns"
 )
@@ -18,9 +19,6 @@ const (
 	RewriteIgnored Result = iota
 	// RewriteDone is returned when rewrite is done on request.
 	RewriteDone
-	// RewriteStatus is returned when rewrite is not needed and status code should be set
-	// for the request.
-	RewriteStatus
 )
 
 // These are defined processing mode.
@@ -41,8 +39,10 @@ type Rewrite struct {
 // ServeDNS implements the plugin.Handler interface.
 func (rw Rewrite) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
 	wr := NewResponseReverter(w, r)
+	state := request.Request{W: w, Req: r}
+
 	for _, rule := range rw.Rules {
-		switch result := rule.Rewrite(w, r); result {
+		switch result := rule.Rewrite(ctx, state); result {
 		case RewriteDone:
 			respRule := rule.GetResponseRule()
 			if respRule.Active == true {
@@ -57,11 +57,6 @@ func (rw Rewrite) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg
 			}
 		case RewriteIgnored:
 			break
-		case RewriteStatus:
-			// only valid for complex rules.
-			// if cRule, ok := rule.(*ComplexRule); ok && cRule.Status != 0 {
-			// return cRule.Status, nil
-			// }
 		}
 	}
 	if rw.noRevert || len(wr.ResponseRules) == 0 {
@@ -76,7 +71,7 @@ func (rw Rewrite) Name() string { return "rewrite" }
 // Rule describes a rewrite rule.
 type Rule interface {
 	// Rewrite rewrites the current request.
-	Rewrite(dns.ResponseWriter, *dns.Msg) Result
+	Rewrite(ctx context.Context, state request.Request) Result
 	// Mode returns the processing mode stop or continue.
 	Mode() string
 	// GetResponseRule returns the rule to rewrite response with, if any.
